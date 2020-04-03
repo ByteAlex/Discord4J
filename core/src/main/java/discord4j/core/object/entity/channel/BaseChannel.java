@@ -18,7 +18,7 @@ package discord4j.core.object.entity.channel;
 
 import discord4j.discordjson.json.ChannelData;
 import discord4j.core.GatewayDiscordClient;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Snowflake;
 import discord4j.core.util.EntityUtil;
 import discord4j.rest.entity.RestChannel;
 import reactor.core.publisher.Mono;
@@ -47,7 +47,7 @@ class BaseChannel implements Channel {
     BaseChannel(final GatewayDiscordClient gateway, final ChannelData data) {
         this.gateway = Objects.requireNonNull(gateway);
         this.data = Objects.requireNonNull(data);
-        this.rest = RestChannel.create(gateway.getRestClient(), Long.parseUnsignedLong(data.id()));
+        this.rest = RestChannel.create(gateway.getRestClient(), Snowflake.asLong(data.id()));
     }
 
     @Override

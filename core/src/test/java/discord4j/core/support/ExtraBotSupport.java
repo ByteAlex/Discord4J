@@ -7,8 +7,8 @@ import discord4j.core.event.domain.message.MessageCreateEvent;
 import discord4j.core.object.entity.*;
 import discord4j.core.object.entity.channel.TextChannel;
 import discord4j.core.object.reaction.ReactionEmoji;
-import discord4j.core.object.util.Image;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Image;
+import discord4j.rest.util.Snowflake;
 import discord4j.discordjson.json.ApplicationInfoData;
 import org.slf4j.LoggerFactory;
 import reactor.core.Exceptions;
@@ -46,7 +46,7 @@ public class ExtraBotSupport {
     public static Mono<Void> commandHandler(GatewayDiscordClient client) {
         Mono<Long> ownerId = client.rest().getApplicationInfo()
                 .map(ApplicationInfoData::owner)
-                .map(user -> Long.parseUnsignedLong(user.id()))
+                .map(user -> Snowflake.asLong(user.id()))
                 .cache();
 
         List<EventHandler> eventHandlers = new ArrayList<>();

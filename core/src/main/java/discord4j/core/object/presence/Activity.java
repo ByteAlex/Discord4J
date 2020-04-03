@@ -17,7 +17,7 @@
 package discord4j.core.object.presence;
 
 import discord4j.core.object.reaction.ReactionEmoji;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Snowflake;
 import discord4j.core.util.EntityUtil;
 import discord4j.discordjson.json.ActivityData;
 import discord4j.discordjson.json.ActivityUpdateRequest;
@@ -80,6 +80,15 @@ public class Activity {
      */
     public Optional<String> getStreamingUrl() {
         return Possible.flatOpt(data.url());
+    }
+
+    /**
+     * Gets unix timestamp of when the activity was added to the user's session.
+     *
+     * @return The unix timestamp of when the activity was added to the user's session.
+     */
+    public Instant getCreatedAt() {
+        return Instant.ofEpochMilli(data.createdAt());
     }
 
     /**
@@ -208,16 +217,31 @@ public class Activity {
             .flatMap(assets -> assets.smallText().toOptional());
     }
 
+    /**
+     * Gets the secret for joining a party, if present.
+     *
+     * @return The secret for joining a party, if present.
+     */
     public Optional<String> getJoinSecret() {
         return data.secrets().toOptional()
             .flatMap(secrets -> secrets.join().toOptional());
     }
 
+    /**
+     * Gets the secret for spectating a game, if present.
+     *
+     * @return The secret for spectating a game, if present.
+     */
     public Optional<String> getSpectateSecret() {
         return data.secrets().toOptional()
             .flatMap(secrets -> secrets.spectate().toOptional());
     }
 
+    /**
+     * Gets the secret for a specific instanced match, if present.
+     *
+     * @return The secret for a specific instanced match, if present.
+     */
     public Optional<String> getMatchSecret() {
         return data.secrets().toOptional()
             .flatMap(secrets -> secrets.match().toOptional());
@@ -233,7 +257,7 @@ public class Activity {
             .map(emoji -> {
                 // TODO FIXME
                 String sid = emoji.id().toOptional().orElse(null);
-                Long id = sid == null ? null : Long.parseUnsignedLong(sid);
+                Long id = sid == null ? null : Snowflake.asLong(sid);
                 return ReactionEmoji.of(id, emoji.name(), emoji.animated().toOptional().orElse(false));
             });
     }
@@ -241,10 +265,9 @@ public class Activity {
     /**
      * Gets whether or not the activity is an instanced game session.
      *
-     * @return Whether or not the activity is an instanced game session
+     * @return Whether or not the activity is an instanced game session.
      */
     public boolean isInstance() {
-//        return Optional.ofNullable(data.getInstance()).orElse(false);
         return data.instance().toOptional().orElse(false);
     }
 
@@ -259,7 +282,7 @@ public class Activity {
     /** The type of "action" for an activity. */
     public enum Type {
 
-        /** Unknown type **/
+        /** Unknown type. **/
         UNKNOWN(-1),
 
         /** "Playing {name}" */

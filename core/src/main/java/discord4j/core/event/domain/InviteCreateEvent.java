@@ -20,7 +20,7 @@ import discord4j.core.GatewayDiscordClient;
 import discord4j.core.object.Invite;
 import discord4j.core.object.entity.Guild;
 import discord4j.core.object.entity.User;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Snowflake;
 import discord4j.gateway.ShardInfo;
 import reactor.core.publisher.Mono;
 import reactor.util.annotation.Nullable;
@@ -138,6 +138,11 @@ public class InviteCreateEvent extends Event {
         return maxAge;
     }
 
+    /**
+     * Gets whether or not the invite is temporary (invited users will be kicked on disconnect unless they're assigned a role).
+     *
+     * @return Whether or not the invite is temporary.
+     */
     public boolean isTemporary() {
         return temporary;
     }

@@ -21,7 +21,7 @@ import discord4j.core.object.entity.Guild;
 import discord4j.core.object.entity.Role;
 import discord4j.core.object.entity.channel.Channel;
 import discord4j.rest.util.PermissionSet;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Snowflake;
 
 import java.awt.*;
 import java.util.Set;
@@ -84,6 +84,11 @@ public final class ChangeKey<T> {
         this.name = name;
     }
 
+    /**
+     * Gets the name of audit log change key.
+     *
+     * @return The name of audit log change key.
+     */
     public String getName() {
         return name;
     }

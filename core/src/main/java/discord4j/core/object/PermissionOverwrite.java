@@ -19,7 +19,7 @@ package discord4j.core.object;
 import discord4j.core.object.entity.Member;
 import discord4j.core.object.entity.Role;
 import discord4j.rest.util.PermissionSet;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Snowflake;
 
 import java.util.Optional;
 
@@ -115,7 +115,7 @@ public class PermissionOverwrite {
     /** The type of entity a {@link PermissionOverwrite} is for. */
     public enum Type {
 
-        /** Unknown type */
+        /** Unknown type. */
         UNKNOWN("UNKNOWN"),
 
         /** The {@link Role} entity. */

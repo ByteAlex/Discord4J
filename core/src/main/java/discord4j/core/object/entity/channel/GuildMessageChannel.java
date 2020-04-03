@@ -17,7 +17,7 @@
 package discord4j.core.object.entity.channel;
 
 import discord4j.core.object.entity.Webhook;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Snowflake;
 import discord4j.core.spec.WebhookCreateSpec;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -29,7 +29,7 @@ import java.util.function.Consumer;
 public interface GuildMessageChannel extends CategorizableChannel, MessageChannel {
 
     /**
-     * Gets the channel topic, if present
+     * Gets the channel topic, if present.
      *
      * @return The channel topic, if present.
      */

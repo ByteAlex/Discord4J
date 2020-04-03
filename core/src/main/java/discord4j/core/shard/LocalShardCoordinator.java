@@ -17,15 +17,16 @@
 
 package discord4j.core.shard;
 
-import discord4j.gateway.PayloadTransformer;
-import discord4j.gateway.PoolingTransformer;
 import discord4j.gateway.SessionInfo;
 import discord4j.gateway.ShardInfo;
+import discord4j.gateway.limiter.PayloadTransformer;
+import discord4j.gateway.limiter.RateLimitTransformer;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * A centralized local {@link ShardCoordinator} that can operate on a single JVM instance to coordinate Gateway
@@ -33,13 +34,45 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class LocalShardCoordinator implements ShardCoordinator {
 
+    public static final Supplier<PayloadTransformer> DEFAULT_IDENTIFY_LIMITER_FACTORY =
+            () -> new RateLimitTransformer(1, Duration.ofSeconds(6));
+
     private final Map<Integer, PayloadTransformer> limiters = new ConcurrentHashMap<>(1);
+    private final Supplier<PayloadTransformer> identifyLimiterFactory;
+
+    /**
+     * Create a new {@link LocalShardCoordinator} that is able to locally coordinate multiple shards under a single
+     * JVM instance.
+     *
+     * @deprecated use {@link #create()} or {@link #create(Supplier)}
+     */
+    @Deprecated
+    public LocalShardCoordinator() {
+        this(DEFAULT_IDENTIFY_LIMITER_FACTORY);
+    }
+
+    private LocalShardCoordinator(Supplier<PayloadTransformer> identifyLimiterFactory) {
+        this.identifyLimiterFactory = identifyLimiterFactory;
+    }
 
     /**
      * Create a new {@link LocalShardCoordinator} that is able to locally coordinate multiple shards under a single
      * JVM instance.
      */
-    public LocalShardCoordinator() {}
+    public static LocalShardCoordinator create() {
+        return new LocalShardCoordinator(DEFAULT_IDENTIFY_LIMITER_FACTORY);
+    }
+
+    /**
+     * Create a new {@link LocalShardCoordinator} that is able to locally coordinate multiple shards under a single
+     * JVM instance.
+     *
+     * @param identifyLimiterFactory a supplier of {@link PayloadTransformer} instances for limiting IDENTIFY access
+     * across buckets.
+     */
+    public static LocalShardCoordinator create(Supplier<PayloadTransformer> identifyLimiterFactory) {
+        return new LocalShardCoordinator(identifyLimiterFactory);
+    }
 
     @Override
     public Mono<Void> publishConnected(ShardInfo shardInfo) {
@@ -53,7 +86,6 @@ public class LocalShardCoordinator implements ShardCoordinator {
 
     @Override
     public PayloadTransformer getIdentifyLimiter(ShardInfo shardInfo, int shardingFactor) {
-        return limiters.computeIfAbsent(shardInfo.getIndex() % shardingFactor,
-                k -> new PoolingTransformer(1, Duration.ofSeconds(6)));
+        return limiters.computeIfAbsent(shardInfo.getIndex() % shardingFactor, k -> identifyLimiterFactory.get());
     }
 }

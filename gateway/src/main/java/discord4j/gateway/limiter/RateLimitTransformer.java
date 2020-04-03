@@ -15,26 +15,30 @@
  * along with Discord4J. If not, see <http://www.gnu.org/licenses/>.
  */
 
-package discord4j.gateway;
+package discord4j.gateway.limiter;
 
+import discord4j.common.operator.RateLimitOperator;
 import io.netty.buffer.ByteBuf;
 import org.reactivestreams.Publisher;
-import reactor.core.publisher.Flux;
-import reactor.util.function.Tuple2;
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 
-public class PoolingTransformer implements PayloadTransformer {
+public class RateLimitTransformer implements PayloadTransformer {
 
-    private final BucketPool pool;
+    private final RateLimitOperator<ByteBuf> operator;
 
-    public PoolingTransformer(int capacity, Duration refillPeriod) {
-        this.pool = new BucketPool(capacity, refillPeriod);
+    public RateLimitTransformer(int capacity, Duration refillPeriod) {
+        this(capacity, refillPeriod, Schedulers.parallel());
+    }
+
+    public RateLimitTransformer(int capacity, Duration refillPeriod, Scheduler delayScheduler) {
+        this.operator = new RateLimitOperator<>(capacity, refillPeriod, delayScheduler);
     }
 
     @Override
-    public Publisher<ByteBuf> apply(Flux<Tuple2<GatewayClient, ByteBuf>> publisher) {
-        return publisher.flatMap(t2 -> this.pool.acquire(t2.getT1().getResponseTime())
-                .thenReturn(t2.getT2()));
+    public Publisher<ByteBuf> apply(Publisher<ByteBuf> sequence) {
+        return operator.apply(sequence);
     }
 }

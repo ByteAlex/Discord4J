@@ -80,6 +80,9 @@ public enum Permission {
     /** Allows the usage of custom emojis from other servers. */
     USE_EXTERNAL_EMOJIS(0x00040000, false),
 
+    /** Allows for viewing guild insights. */
+    VIEW_GUILD_INSIGHTS(0x00080000, false),
+
     /** Allows for joining of a voice channel. */
     CONNECT(0x00100000, false),
 
@@ -113,7 +116,7 @@ public enum Permission {
     /** Allows management and editing of emojis. */
     MANAGE_EMOJIS(0x40000000, true),
 
-    /** Allows for Stream in voice channel */
+    /** Allows for Stream in voice channel. */
     STREAM(0x00000200, false);
 
     /** Whether MFA is required. */

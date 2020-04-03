@@ -19,8 +19,9 @@ package discord4j.core.object.entity;
 import discord4j.core.GatewayDiscordClient;
 import discord4j.core.object.VoiceState;
 import discord4j.core.object.presence.Presence;
+import discord4j.discordjson.possible.Possible;
 import discord4j.rest.util.PermissionSet;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Snowflake;
 import discord4j.core.spec.BanQuerySpec;
 import discord4j.core.spec.GuildMemberEditSpec;
 import discord4j.core.util.OrderUtil;
@@ -127,9 +128,9 @@ public final class Member extends User {
     }
 
     /**
-     * Gets when the user boost the guild, if present.
+     * Gets when the user started boosting the server, if present.
      *
-     * @return When the user boost the guild, if present.
+     * @return When the user started boosting the server, if present.
      */
     public Optional<Instant> getPremiumTime() {
         return data.premiumSince()
@@ -170,7 +171,7 @@ public final class Member extends User {
      * @return The user's guild nickname (if one is set).
      */
     public Optional<String> getNickname() {
-        return data.nick().get();
+        return Possible.flatOpt(data.nick());
     }
 
     /**

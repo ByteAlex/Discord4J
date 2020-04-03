@@ -20,7 +20,7 @@ import discord4j.core.GatewayDiscordClient;
 import discord4j.core.object.entity.Guild;
 import discord4j.core.object.entity.User;
 import discord4j.core.object.entity.channel.CategorizableChannel;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Snowflake;
 import discord4j.discordjson.json.InviteData;
 import discord4j.discordjson.json.PartialGuildData;
 import discord4j.discordjson.json.UserData;
@@ -220,10 +220,10 @@ public class Invite implements DiscordObject {
     /** Represents the various types of target user for an invite. */
     public enum Type {
 
-        /** Unknown type */
+        /** Unknown type. */
         UNKNOWN(-1),
 
-        /** Stream */
+        /** Stream. */
         STREAM(1);
 
         /** The underlying value as represented by Discord. */

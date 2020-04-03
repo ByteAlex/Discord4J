@@ -16,7 +16,6 @@
  */
 package discord4j.gateway;
 
-import discord4j.discordjson.json.gateway.*;
 import discord4j.common.GitProperties;
 import discord4j.common.LogUtil;
 import discord4j.common.ReactorResources;
@@ -24,9 +23,12 @@ import discord4j.common.ResettableInterval;
 import discord4j.common.close.CloseException;
 import discord4j.common.close.CloseStatus;
 import discord4j.common.close.DisconnectBehavior;
+import discord4j.common.operator.RateLimitOperator;
 import discord4j.common.retry.ReconnectContext;
 import discord4j.common.retry.ReconnectOptions;
+import discord4j.discordjson.json.gateway.*;
 import discord4j.gateway.json.GatewayPayload;
+import discord4j.gateway.limiter.PayloadTransformer;
 import discord4j.gateway.payload.PayloadReader;
 import discord4j.gateway.payload.PayloadWriter;
 import discord4j.gateway.retry.GatewayException;
@@ -40,7 +42,6 @@ import reactor.retry.Retry;
 import reactor.util.Logger;
 import reactor.util.Loggers;
 import reactor.util.context.Context;
-import reactor.util.function.Tuples;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -72,6 +73,8 @@ import static io.netty.handler.codec.http.HttpHeaderNames.USER_AGENT;
 public class DefaultGatewayClient implements GatewayClient {
 
     private static final Logger log = Loggers.getLogger(DefaultGatewayClient.class);
+    private static final Logger senderLog = Loggers.getLogger("discord4j.gateway.protocol.sender");
+    private static final Logger receiverLog = Loggers.getLogger("discord4j.gateway.protocol.receiver");
 
     // basic properties
     private final ReactorResources reactorResources;
@@ -135,8 +138,8 @@ public class DefaultGatewayClient implements GatewayClient {
 
     @Override
     public Mono<Void> execute(String gatewayUrl) {
-        return Mono.subscriberContext()
-                .flatMap(context -> {
+        return Mono.deferWithContext(
+                context -> {
                     disconnectNotifier = MonoProcessor.create();
                     lastAck.set(0);
                     lastSent.set(0);
@@ -147,19 +150,17 @@ public class DefaultGatewayClient implements GatewayClient {
                     Flux<ByteBuf> identifyFlux = outbound.filter(payload -> Opcode.IDENTIFY.equals(payload.getOp()))
                             .delayUntil(payload -> ping)
                             .flatMap(payload -> Flux.from(payloadWriter.write(payload)))
-                            .map(buf -> Tuples.of((GatewayClient) this, buf))
-                            .transform(identifyLimiter::apply);
-                    PayloadTransformer outLimiter = new PoolingTransformer(outboundLimiterCapacity(),
-                            Duration.ofSeconds(60));
+                            .transform(identifyLimiter);
+                    RateLimitOperator<ByteBuf> outLimiter =
+                            new RateLimitOperator<>(outboundLimiterCapacity(), Duration.ofSeconds(60));
                     Flux<ByteBuf> payloadFlux = outbound.filter(payload -> !Opcode.IDENTIFY.equals(payload.getOp()))
                             .flatMap(payload -> Flux.from(payloadWriter.write(payload)))
                             .transform(buf -> Flux.merge(buf, sender))
-                            .map(buf -> Tuples.of((GatewayClient) this, buf))
-                            .transform(outLimiter::apply);
+                            .transform(outLimiter);
                     Flux<ByteBuf> heartbeatFlux =
                             heartbeats.flatMap(payload -> Flux.from(payloadWriter.write(payload)));
                     Flux<ByteBuf> outFlux = Flux.merge(heartbeatFlux, identifyFlux, payloadFlux)
-                            .doOnNext(buf -> logPayload(">> ", context, buf));
+                            .doOnNext(buf -> logPayload(senderLog, context, buf));
 
                     sessionHandler = new GatewayWebsocketHandler(receiverSink, outFlux, context);
 
@@ -193,7 +194,7 @@ public class DefaultGatewayClient implements GatewayClient {
 
                     // Subscribe the receiver to process and transform the inbound payloads into Dispatch events
                     Mono<Void> receiverFuture = receiver
-                            .doOnNext(buf -> logPayload("<< ", context, buf))
+                            .doOnNext(buf -> logPayload(receiverLog, context, buf))
                             .flatMap(payloadReader::read)
                             .doOnNext(payload -> {
                                 if (Opcode.HEARTBEAT_ACK.equals(payload.getOp())) {
@@ -265,8 +266,8 @@ public class DefaultGatewayClient implements GatewayClient {
         return "DiscordBot(" + url + ", " + version + ")";
     }
 
-    private void logPayload(String prefix, Context context, ByteBuf buf) {
-        log.trace(format(context, prefix + buf.toString(StandardCharsets.UTF_8)
+    private void logPayload(Logger logger, Context context, ByteBuf buf) {
+        logger.trace(format(context, buf.toString(StandardCharsets.UTF_8)
                 .replaceAll("(\"token\": ?\")([A-Za-z0-9._-]*)(\")", "$1hunter2$3")));
     }
 

@@ -19,7 +19,7 @@ package discord4j.core.event.domain.guild;
 import discord4j.core.GatewayDiscordClient;
 import discord4j.core.object.entity.Guild;
 import discord4j.core.object.entity.Member;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Snowflake;
 import discord4j.gateway.ShardInfo;
 import reactor.core.publisher.Mono;
 import reactor.util.annotation.Nullable;
@@ -134,9 +134,9 @@ public class MemberUpdateEvent extends GuildEvent {
     }
 
     /**
-     * Gets when the user used their Nitro boost on the guild, if present.
+     * Gets when the user started boosting the guild, if present.
      *
-     * @return When the user used their Nitro boost on the guild, if present.
+     * @return When the user started boosting the guild, if present.
      */
     public Optional<Instant> getCurrentPremiumSince() {
         return Optional.ofNullable(currentPremiumSince)

@@ -31,11 +31,14 @@ import discord4j.core.event.domain.Event;
 import discord4j.core.object.presence.Presence;
 import discord4j.core.state.StateHolder;
 import discord4j.core.state.StateView;
+import discord4j.discordjson.json.ActivityUpdateRequest;
 import discord4j.discordjson.json.MessageData;
 import discord4j.discordjson.json.gateway.Dispatch;
 import discord4j.discordjson.json.gateway.StatusUpdate;
 import discord4j.gateway.*;
 import discord4j.gateway.json.ShardAwareDispatch;
+import discord4j.gateway.limiter.PayloadTransformer;
+import discord4j.gateway.limiter.RateLimitTransformer;
 import discord4j.gateway.payload.JacksonPayloadReader;
 import discord4j.gateway.payload.JacksonPayloadWriter;
 import discord4j.gateway.payload.PayloadReader;
@@ -60,6 +63,7 @@ import reactor.util.Loggers;
 import reactor.util.annotation.Nullable;
 import reactor.util.context.Context;
 
+import java.time.Duration;
 import java.util.*;
 import java.util.function.Function;
 
@@ -98,7 +102,7 @@ public class GatewayBootstrap<O extends GatewayOptions> {
 
     private ShardingStrategy shardingStrategy = ShardingStrategy.recommended();
     private boolean awaitConnections = true;
-    private ShardCoordinator shardCoordinator = new LocalShardCoordinator();
+    private ShardCoordinator shardCoordinator = null;
     private EventDispatcher eventDispatcher = null;
     private StoreService storeService = null;
     private Function<StoreService, StoreService> storeServiceMapper = shardAwareStoreService();
@@ -287,10 +291,19 @@ public class GatewayBootstrap<O extends GatewayOptions> {
     }
 
     /**
-     * Set a {@link Function} to determine the {@link Presence} that each joining shard should use when identifying
-     * to the Gateway. Defaults to no presence given.
+     * Set a {@link Function} to determine the {@link StatusUpdate} that each joining shard should use when identifying
+     * to the Gateway. Defaults to no status given.
+     * <p>
+     * {@link StatusUpdate} instances can be built through factories in {@link Presence}:
+     * <ul>
+     *     <li>{@link Presence#online()} and {@link Presence#online(ActivityUpdateRequest)}</li>
+     *     <li>{@link Presence#idle()} and {@link Presence#idle(ActivityUpdateRequest)}</li>
+     *     <li>{@link Presence#doNotDisturb()} and {@link Presence#doNotDisturb(ActivityUpdateRequest)}</li>
+     *     <li>{@link Presence#invisible()}</li>
+     * </ul>
      *
-     * @param initialPresence a {@link Function} that supplies {@link Presence} instances from a given {@link ShardInfo}
+     * @param initialPresence a {@link Function} that supplies {@link StatusUpdate} instances from a given
+     * {@link ShardInfo}
      * @return this builder
      * @deprecated use {@link #setInitialStatus(Function)}
      */
@@ -303,6 +316,14 @@ public class GatewayBootstrap<O extends GatewayOptions> {
     /**
      * Set a {@link Function} to determine the {@link StatusUpdate} that each joining shard should use when identifying
      * to the Gateway. Defaults to no status given.
+     * <p>
+     * {@link StatusUpdate} instances can be built through factories in {@link Presence}:
+     * <ul>
+     *     <li>{@link Presence#online()} and {@link Presence#online(ActivityUpdateRequest)}</li>
+     *     <li>{@link Presence#idle()} and {@link Presence#idle(ActivityUpdateRequest)}</li>
+     *     <li>{@link Presence#doNotDisturb()} and {@link Presence#doNotDisturb(ActivityUpdateRequest)}</li>
+     *     <li>{@link Presence#invisible()}</li>
+     * </ul>
      *
      * @param initialStatus a {@link Function} that supplies {@link StatusUpdate} instances from a given
      * {@link ShardInfo}
@@ -494,20 +515,22 @@ public class GatewayBootstrap<O extends GatewayOptions> {
         StateHolder stateHolder = new StateHolder(initStoreService(), new StoreContext(hints));
         StateView stateView = new StateView(stateHolder);
         EventDispatcher eventDispatcher = initEventDispatcher();
+        ReactorResources gatewayReactorResources = initGatewayReactorResources();
+        ShardCoordinator shardCoordinator = initShardCoordinator(gatewayReactorResources);
         GatewayResources resources = new GatewayResources(stateView, eventDispatcher, shardCoordinator, memberRequest,
-                initGatewayReactorResources(), initVoiceReactorResources(), voiceReconnectOptions);
+                gatewayReactorResources, initVoiceReactorResources(), voiceReconnectOptions);
         MonoProcessor<Void> closeProcessor = MonoProcessor.create();
         GatewayClientGroupManager clientGroup = shardingStrategy.getGroupManager();
         GatewayDiscordClient gateway = new GatewayDiscordClient(client, resources, closeProcessor,
                 clientGroup, voiceConnectionFactory);
 
-        Flux<ShardInfo> connections = shardingStrategy.getShards(client.getCoreResources().getRestClient())
+        Flux<ShardInfo> connections = shardingStrategy.getShards(client)
                 .groupBy(shard -> shard.getIndex() % shardingStrategy.getShardingFactor())
                 .flatMap(group -> group.concatMap(shard -> acquireConnection(shard, clientFactory, gateway,
-                        stateHolder, eventDispatcher, clientGroup, closeProcessor)));
+                        shardCoordinator, stateHolder, eventDispatcher, clientGroup, closeProcessor)));
 
         if (awaitConnections) {
-            return connections.collectList().thenReturn(gateway);
+            return connections.then(Mono.just(gateway));
         } else {
             return Mono.create(sink -> {
                 sink.onCancel(connections.subscribe(null,
@@ -520,6 +543,7 @@ public class GatewayBootstrap<O extends GatewayOptions> {
     private Mono<ShardInfo> acquireConnection(ShardInfo shard,
                                               Function<O, GatewayClient> clientFactory,
                                               GatewayDiscordClient gateway,
+                                              ShardCoordinator shardCoordinator,
                                               StateHolder stateHolder,
                                               EventDispatcher eventDispatcher,
                                               GatewayClientGroupManager clientGroup,
@@ -533,8 +557,10 @@ public class GatewayBootstrap<O extends GatewayOptions> {
                         identify.setResumeSessionId(resume.getId());
                         identify.setResumeSequence(resume.getSequence());
                     }
+                    PayloadTransformer limiter = shardCoordinator.getIdentifyLimiter(shard,
+                            shardingStrategy.getShardingFactor());
                     Disposable.Composite forCleanup = Disposables.composite();
-                    GatewayClient gatewayClient = clientFactory.apply(buildOptions(gateway, identify));
+                    GatewayClient gatewayClient = clientFactory.apply(buildOptions(gateway, identify, limiter));
                     clientGroup.add(shard.getIndex(), gatewayClient);
 
                     // wire gateway events to EventDispatcher
@@ -611,9 +637,7 @@ public class GatewayBootstrap<O extends GatewayOptions> {
                                     t -> log.error(format(ctx, "Lifecycle listener terminated with an error"), t),
                                     () -> log.debug(format(ctx, "Lifecycle listener completed"))));
 
-                    forCleanup.add(this.client.getCoreResources()
-                            .getRestClient()
-                            .getGatewayService()
+                    forCleanup.add(this.client.getGatewayService()
                             .getGateway()
                             .doOnSubscribe(s -> log.debug(format(ctx, "Acquiring gateway endpoint")))
                             .retryBackoff(reconnectOptions.getMaxRetries(),
@@ -666,6 +690,14 @@ public class GatewayBootstrap<O extends GatewayOptions> {
         return EventDispatcher.buffering();
     }
 
+    private ShardCoordinator initShardCoordinator(ReactorResources reactorResources) {
+        if (shardCoordinator != null) {
+            return shardCoordinator;
+        }
+        return LocalShardCoordinator.create(() ->
+                new RateLimitTransformer(1, Duration.ofSeconds(6), reactorResources.getTimerTaskScheduler()));
+    }
+
     private StoreService initStoreService() {
         if (storeService == null) {
             Map<Class<? extends StoreService>, Integer> priority = new HashMap<>();
@@ -688,12 +720,10 @@ public class GatewayBootstrap<O extends GatewayOptions> {
                 .apply(storeService);
     }
 
-    private O buildOptions(GatewayDiscordClient gateway, IdentifyOptions identify) {
-        ShardInfo shardInfo = identify.getShardInfo();
+    private O buildOptions(GatewayDiscordClient gateway, IdentifyOptions identify, PayloadTransformer identifyLimiter) {
         GatewayOptions options = new GatewayOptions(client.getCoreResources().getToken(),
                 gateway.getGatewayResources().getGatewayReactorResources(), initPayloadReader(), initPayloadWriter(),
-                reconnectOptions, identify, gatewayObserver,
-                shardCoordinator.getIdentifyLimiter(shardInfo, shardingStrategy.getShardingFactor()));
+                reconnectOptions, identify, gatewayObserver, identifyLimiter);
         return this.optionsModifier.apply(options);
     }
 

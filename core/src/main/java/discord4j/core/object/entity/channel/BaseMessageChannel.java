@@ -21,7 +21,7 @@ import discord4j.discordjson.json.MessageData;
 import discord4j.discordjson.possible.Possible;
 import discord4j.core.GatewayDiscordClient;
 import discord4j.core.object.entity.Message;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Snowflake;
 import discord4j.core.spec.MessageCreateSpec;
 import discord4j.rest.util.PaginationUtil;
 import org.reactivestreams.Publisher;
@@ -62,7 +62,7 @@ class BaseMessageChannel extends BaseChannel implements MessageChannel {
 
     @Override
     public final Optional<Instant> getLastPinTimestamp() {
-        return getData().lastPinTimestamp().get()
+        return Possible.flatOpt(getData().lastPinTimestamp())
                 .map(timestamp -> DateTimeFormatter.ISO_OFFSET_DATE_TIME.parse(timestamp, Instant::from));
     }
 
@@ -101,7 +101,7 @@ class BaseMessageChannel extends BaseChannel implements MessageChannel {
                 getClient().getRestClient().getChannelService()
                         .getMessages(getId().asLong(), params);
 
-        return PaginationUtil.paginateBefore(doRequest, data -> Long.parseUnsignedLong(data.id()), messageId.asLong(), 100)
+        return PaginationUtil.paginateBefore(doRequest, data -> Snowflake.asLong(data.id()), messageId.asLong(), 100)
                 .map(data -> new Message(getClient(), data));
     }
 
@@ -111,7 +111,7 @@ class BaseMessageChannel extends BaseChannel implements MessageChannel {
                 getClient().getRestClient().getChannelService()
                         .getMessages(getId().asLong(), params);
 
-        return PaginationUtil.paginateAfter(doRequest, data -> Long.parseUnsignedLong(data.id()), messageId.asLong(), 100)
+        return PaginationUtil.paginateAfter(doRequest, data -> Snowflake.asLong(data.id()), messageId.asLong(), 100)
                 .map(data -> new Message(getClient(), data));
     }
 

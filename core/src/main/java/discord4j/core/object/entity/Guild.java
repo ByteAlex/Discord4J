@@ -24,8 +24,8 @@ import discord4j.core.object.VoiceState;
 import discord4j.core.object.audit.AuditLogEntry;
 import discord4j.core.object.entity.channel.*;
 import discord4j.core.object.presence.Presence;
-import discord4j.core.object.util.Image;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Image;
+import discord4j.rest.util.Snowflake;
 import discord4j.core.spec.*;
 import discord4j.core.util.EntityUtil;
 import discord4j.core.util.ImageUtil;
@@ -54,13 +54,16 @@ import java.util.stream.Collectors;
 public final class Guild implements Entity {
 
     /** The default value for the maximum number of presences. **/
-    private static final int DEFAULT_MAX_PRESENCES = 5000;
+    private static final int DEFAULT_MAX_PRESENCES = 25000;
 
     /** The path for guild icon image URLs. */
     private static final String ICON_IMAGE_PATH = "icons/%s/%s";
 
     /** The path for guild splash image URLs. */
     private static final String SPLASH_IMAGE_PATH = "splashes/%s/%s";
+
+    /** The path for guild discovery splash image URLs. */
+    private static final String DISCOVERY_SPLASH_IMAGE_PATH = "discovery-splashes/%s/%s";
 
     /** The path for guild banner image URLs. */
     private static final String BANNER_IMAGE_PATH = "banners/%s/%s";
@@ -143,6 +146,28 @@ public final class Guild implements Entity {
      */
     public Mono<Image> getSplash(final Image.Format format) {
         return Mono.justOrEmpty(getSplashUrl(format)).flatMap(Image::ofUrl);
+    }
+
+    /**
+     * Gets the discovery splash URL of the guild, if present.
+     *
+     * @param format The format for the URL.
+     * @return The discovery splash URL of the guild, if present.
+     */
+    public Optional<String> getDiscoverySplashUrl(final Image.Format format) {
+        return data.discoverySplash()
+                .map(splash -> ImageUtil.getUrl(String.format(DISCOVERY_SPLASH_IMAGE_PATH, getId().asString(), splash), format));
+    }
+
+    /**
+     * Gets the discovery splash of the guild.
+     *
+     * @param format The format in which to get the image.
+     * @return A {@link Mono} where, upon successful completion, emits the {@link Image discovery splash} of the guild.
+     * If an error is received, it is emitted through the {@code Mono}.
+     */
+    public Mono<Image> getDiscoverySplash(final Image.Format format) {
+        return Mono.justOrEmpty(getDiscoverySplashUrl(format)).flatMap(Image::ofUrl);
     }
 
     /**
@@ -251,7 +276,7 @@ public final class Guild implements Entity {
      * @return The ID of the embedded channel, if present.
      */
     public Optional<Snowflake> getEmbedChannelId() {
-        return data.embedChannelId().get().map(Snowflake::of);
+        return Possible.flatOpt(data.embedChannelId()).map(Snowflake::of);
     }
 
     /**
@@ -265,32 +290,32 @@ public final class Guild implements Entity {
     }
 
     /**
-     * Gets the Premium Tier for the guild
+     * Gets the Premium Tier (Server Boost level) for the guild.
      *
-     * @return The Premium Tier for the guild.
+     * @return The Premium Tier (Server Boost level) for the guild.
      */
     public PremiumTier getPremiumTier() {
         return PremiumTier.of(data.premiumTier());
     }
 
     /**
-     * Gets the total number of users currently boosting this server, if present.
+     * Gets the number of boosts this server currently has, if present.
      *
-     * @return The total number of users currently boosting this server, if present.
+     * @return The number of boosts this server currently has, if present.
      */
     public OptionalInt getPremiumSubscriptionCount() {
-        return data.premiumSubscriptionCount().toOptional()
+        return Possible.flatOpt(data.premiumSubscriptionCount())
                 .map(OptionalInt::of)
                 .orElse(OptionalInt.empty());
     }
 
     /**
-     * Gets the preferred locale of the guild, only set if guild has the "DISCOVERABLE" feature, defaults to en-US.
+     * Gets the preferred locale of a "PUBLIC" guild used in server discovery and notices from Discord; defaults to "en-US".
      *
-     * @return The preferred locale of the guild, only set if guild has the "DISCOVERABLE" feature, defaults to en-US.
+     * @return The preferred locale of a "PUBLIC" guild used in server discovery and notices from Discord; defaults to "en-US".
      */
     public Locale getPreferredLocale() {
-        return new Locale.Builder().setLanguageTag(data.preferredLocale()).build();
+        return new Locale.Builder().setLanguageTag(data.preferredLocale().orElse("en-US")).build();
     }
 
     /**
@@ -439,7 +464,7 @@ public final class Guild implements Entity {
      * @return The channel ID for the server widget, if present.
      */
     public Optional<Snowflake> getWidgetChannelId() {
-        return data.widgetChannelId().get().map(Snowflake::of);
+        return Possible.flatOpt(data.widgetChannelId()).map(Snowflake::of);
     }
 
     /**
@@ -453,9 +478,9 @@ public final class Guild implements Entity {
     }
 
     /**
-     * Gets the ID of the channel to which system messages are sent, if present.
+     * Gets the ID of the channel where guild notices such as welcome messages and boost events are posted, if present.
      *
-     * @return The ID of the channel to which system messages are sent, if present.
+     * @return The ID of the channel where guild notices such as welcome messages and boost events are posted, if present.
      */
     public Optional<Snowflake> getSystemChannelId() {
         return data.systemChannelId().map(Snowflake::of);
@@ -469,6 +494,15 @@ public final class Guild implements Entity {
      */
     public Mono<TextChannel> getSystemChannel() {
         return Mono.justOrEmpty(getSystemChannelId()).flatMap(gateway::getChannelById).cast(TextChannel.class);
+    }
+
+    /**
+     * Returns the flags of the system {@link TextChannel channel}.
+     *
+     * @return A {@code EnumSet} with the flags of the system {@link TextChannel channel}.
+     */
+    public EnumSet<Flag> getSystemChannelFlags() {
+        return Flag.of(data.systemChannelFlags().orElse(0));
     }
 
     /**
@@ -495,7 +529,7 @@ public final class Guild implements Entity {
      * @return If present, {@code true} if the guild is unavailable, {@code false} otherwise.
      */
     public boolean isUnavailable() {
-        return data.unavailable();
+        return data.unavailable().toOptional().orElse(false);
     }
 
     /**
@@ -532,13 +566,13 @@ public final class Guild implements Entity {
                         .getGuildMembers(getId().asLong(), params);
 
         Flux<Member> requestMembers =
-                PaginationUtil.paginateAfter(doRequest, data -> Long.parseUnsignedLong(data.user().id()), 0, 100)
+                PaginationUtil.paginateAfter(doRequest, data -> Snowflake.asLong(data.user().id()), 0, 100)
                         .map(data -> new Member(gateway, data, getId().asLong()));
 
         return Mono.justOrEmpty(data.members())
                 .flatMapMany(Flux::fromIterable)
                 .flatMap(id -> gateway.getGatewayResources().getStateView().getMemberStore()
-                        .find(LongLongTuple2.of(getId().asLong(), Long.parseUnsignedLong(id))))
+                        .find(LongLongTuple2.of(getId().asLong(), Snowflake.asLong(id))))
                 .map(member -> new Member(gateway, member, getId().asLong()))
                 .switchIfEmpty(requestMembers);
     }
@@ -568,7 +602,7 @@ public final class Guild implements Entity {
     public Flux<GuildChannel> getChannels() {
         return Flux.fromIterable(data.channels())
                 .flatMap(id -> gateway.getGatewayResources().getStateView().getChannelStore()
-                        .find(Long.parseUnsignedLong(id)))
+                        .find(Snowflake.asLong(id)))
                 .map(channelData -> EntityUtil.getChannel(gateway, channelData))
                 .cast(GuildChannel.class)
                 .switchIfEmpty(gateway.getRestClient().getGuildService()
@@ -949,7 +983,7 @@ public final class Guild implements Entity {
         final ToLongFunction<AuditLogData> getLastEntryId = response -> {
             final List<AuditLogEntryData> entries = response.auditLogEntries();
             return (entries.size() == 0) ? Long.MAX_VALUE :
-                    Long.parseUnsignedLong(entries.get(entries.size() - 1).id());
+                    Snowflake.asLong(entries.get(entries.size() - 1).id());
         };
 
         return PaginationUtil.paginateBefore(makeRequest, getLastEntryId, Long.MAX_VALUE, 100)
@@ -1015,7 +1049,7 @@ public final class Guild implements Entity {
     /** Automatically scan and delete messages sent in the server that contain explicit content. */
     public enum ContentFilterLevel {
 
-        /** Unknown content filter level */
+        /** Unknown content filter level. */
         UNKNOWN(-1),
 
         /** Don't scan any messages. */
@@ -1071,7 +1105,7 @@ public final class Guild implements Entity {
      */
     public enum MfaLevel {
 
-        /** Unknown MFA level */
+        /** Unknown MFA level. */
         UNKNOWN(-1),
 
         /** Disabled 2FA requirement. */
@@ -1123,7 +1157,7 @@ public final class Guild implements Entity {
      */
     public enum NotificationLevel {
 
-        /** Unknown notification level */
+        /** Unknown notification level. */
         UNKNOWN(-1),
 
         /** Receive a notification for all messages. */
@@ -1170,7 +1204,7 @@ public final class Guild implements Entity {
     }
 
     /**
-     * Represent the server Premium Tier (aka boost level) of the {@link Guild}
+     * Represent the server Premium Tier (aka boost level) of the {@link Guild}.
      *
      * @see <a href="https://support.discordapp.com/hc/en/articles/360028038352">Server Boost info</a>
      * @see
@@ -1178,19 +1212,19 @@ public final class Guild implements Entity {
      */
     public enum PremiumTier {
 
-        /** Unknown Premium Tier */
+        /** Unknown Premium Tier. */
         UNKNOWN(-1),
 
-        /** no Premium Tier **/
+        /** No Premium Tier. **/
         NONE(0),
 
-        /** Premium Tier 1 (Boost Level 1) **/
+        /** Premium Tier 1 (Boost Level 1). **/
         TIER_1(1),
 
-        /** Premium Tier 2 (Boost Level 2) **/
+        /** Premium Tier 2 (Boost Level 2). **/
         TIER_2(2),
 
-        /** Premium Tier 3 (Boost Level 3) **/
+        /** Premium Tier 3 (Boost Level 3). **/
         TIER_3(3);
 
         /** The underlying value as represented by Discord. */
@@ -1239,7 +1273,7 @@ public final class Guild implements Entity {
      */
     public enum VerificationLevel {
 
-        /** Unknown verification level */
+        /** Unknown verification level. */
         UNKNOWN(-1),
 
         /** Unrestricted. */
@@ -1294,6 +1328,66 @@ public final class Guild implements Entity {
                 case 4: return VERY_HIGH;
                 default: return UNKNOWN;
             }
+        }
+    }
+
+    /** Describes system channel flags. */
+    public enum Flag {
+
+        /** Member join notifications are suppressed. */
+        SUPPRESS_JOIN_NOTIFICATIONS(0),
+
+        /** Server boost notifications are suppressed. */
+        SUPPRESS_PREMIUM_SUBSCRIPTIONS(1);
+
+        /** The underlying value as represented by Discord. */
+        private final int value;
+
+        /** The flag value as represented by Discord. */
+        private final int flag;
+
+        /**
+         * Constructs a {@code Flag}.
+         */
+        Flag(final int value) {
+            this.value = value;
+            this.flag = 1 << value;
+        }
+
+        /**
+         * Gets the underlying value as represented by Discord.
+         *
+         * @return The underlying value as represented by Discord.
+         */
+        public int getValue() {
+            return value;
+        }
+
+        /**
+         * Gets the flag value as represented by Discord.
+         *
+         * @return The flag value as represented by Discord.
+         */
+        public int getFlag() {
+            return flag;
+        }
+
+        /**
+         * Gets the flags of system channel. It is guaranteed that invoking {@link #getValue()} from the returned enum
+         * will be equal ({@code ==}) to the supplied {@code value}.
+         *
+         * @param value The flags value as represented by Discord.
+         * @return The {@link EnumSet} of flags.
+         */
+        public static EnumSet<Flag> of(final int value) {
+            final EnumSet<Flag> flags = EnumSet.noneOf(Flag.class);
+            for (Flag flag : Flag.values()) {
+                long flagValue = flag.getFlag();
+                if ((flagValue & value) == flagValue) {
+                    flags.add(flag);
+                }
+            }
+            return flags;
         }
     }
 

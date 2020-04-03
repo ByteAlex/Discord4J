@@ -17,7 +17,7 @@
 
 package discord4j.core.shard;
 
-import discord4j.gateway.PayloadTransformer;
+import discord4j.gateway.limiter.PayloadTransformer;
 import discord4j.gateway.SessionInfo;
 import discord4j.gateway.ShardInfo;
 import reactor.core.publisher.Mono;
@@ -50,7 +50,7 @@ public interface ShardCoordinator {
      * Notifies this coordinator that a given shard has disconnected.
      *
      * @param shardInfo the disconnected shard details
-     * @param sessionInfo the disconnected shard session details to resume, or <code>null</code> if resume is not
+     * @param sessionInfo the disconnected shard session details to resume, or {@code null} if resume is not
      * available.
      */
     Mono<Void> publishDisconnected(ShardInfo shardInfo, @Nullable SessionInfo sessionInfo);

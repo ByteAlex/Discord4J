@@ -15,25 +15,16 @@
  * along with Discord4J. If not, see <http://www.gnu.org/licenses/>.
  */
 
-package discord4j.gateway;
+package discord4j.gateway.limiter;
 
 import io.netty.buffer.ByteBuf;
 import org.reactivestreams.Publisher;
-import reactor.core.publisher.Flux;
-import reactor.util.function.Tuple2;
+
+import java.util.function.Function;
 
 /**
  * A transformation function to a sequence of raw {@link ByteBuf} payloads.
  */
 @FunctionalInterface
-public interface PayloadTransformer {
-
-    /**
-     * Transform a sequence of {@link ByteBuf} payloads, along with their parent {@link GatewayClient}, to inject
-     * behavior like delays into the produced sequence of {@link ByteBuf} payloads.
-     *
-     * @param sequence a sequence of payloads
-     * @return the transformed sequence
-     */
-    Publisher<ByteBuf> apply(Flux<Tuple2<GatewayClient, ByteBuf>> sequence);
+public interface PayloadTransformer extends Function<Publisher<ByteBuf>, Publisher<ByteBuf>> {
 }

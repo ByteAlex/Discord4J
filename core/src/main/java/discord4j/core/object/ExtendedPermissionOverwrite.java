@@ -22,7 +22,7 @@ import discord4j.core.object.entity.Guild;
 import discord4j.core.object.entity.Role;
 import discord4j.core.object.entity.User;
 import discord4j.core.object.entity.channel.GuildChannel;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Snowflake;
 import reactor.core.publisher.Mono;
 import reactor.util.annotation.Nullable;
 
@@ -54,7 +54,7 @@ public final class ExtendedPermissionOverwrite extends PermissionOverwrite imple
      */
     public ExtendedPermissionOverwrite(final GatewayDiscordClient gateway, final OverwriteData data,
                                        final long guildId, final long channelId) {
-        super(data.allow(), data.deny(), Long.parseUnsignedLong(data.id()), Type.of(data.type()));
+        super(data.allow(), data.deny(), Snowflake.asLong(data.id()), Type.of(data.type()));
         this.gateway = Objects.requireNonNull(gateway);
         this.guildId = guildId;
         this.channelId = channelId;

@@ -21,6 +21,7 @@ import discord4j.discordjson.json.*;
 import discord4j.rest.RestClient;
 import discord4j.rest.util.MultipartRequest;
 import discord4j.rest.util.PaginationUtil;
+import discord4j.rest.util.Snowflake;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -46,6 +47,16 @@ public class RestChannel {
     private RestChannel(RestClient restClient, long id) {
         this.restClient = restClient;
         this.id = id;
+    }
+
+    /**
+     * Create a {@link RestChannel} with the given parameters.
+     *
+     * @param restClient REST API resources
+     * @param id the ID of this channel
+     */
+    public static RestChannel create(RestClient restClient, Snowflake id) {
+        return new RestChannel(restClient, id.asLong());
     }
 
     /**
@@ -118,7 +129,7 @@ public class RestChannel {
     public Flux<MessageData> getMessagesBefore(long messageId) {
         Function<Map<String, Object>, Flux<MessageData>> doRequest =
                 params -> restClient.getChannelService().getMessages(id, params);
-        return PaginationUtil.paginateBefore(doRequest, data -> Long.parseUnsignedLong(data.id()), messageId, 100);
+        return PaginationUtil.paginateBefore(doRequest, data -> Snowflake.asLong(data.id()), messageId, 100);
     }
 
     /**
@@ -140,7 +151,7 @@ public class RestChannel {
     public Flux<MessageData> getMessagesAfter(long messageId) {
         Function<Map<String, Object>, Flux<MessageData>> doRequest = params ->
                 restClient.getChannelService().getMessages(id, params);
-        return PaginationUtil.paginateAfter(doRequest, data -> Long.parseUnsignedLong(data.id()), messageId, 100);
+        return PaginationUtil.paginateAfter(doRequest, data -> Snowflake.asLong(data.id()), messageId, 100);
     }
 
     /**
@@ -161,7 +172,7 @@ public class RestChannel {
      * @param request request body used to create a new message
      * @return a {@link Mono} where, upon successful completion, emits the created {@link MessageData}. If an
      * error is received, it is emitted through the {@code Mono}.
-     * @see <a href="https://discordapp.com/developers/docs/resources/channel#create-message>Create Message</a>
+     * @see <a href="https://discordapp.com/developers/docs/resources/channel#create-message">Create Message</a>
      */
     public Mono<MessageData> createMessage(MessageCreateRequest request) {
         return restClient.getChannelService().createMessage(id, new MultipartRequest(request));
@@ -174,7 +185,7 @@ public class RestChannel {
      * @param request request body used to create a new message
      * @return a {@link Mono} where, upon successful completion, emits the created {@link MessageData}. If an
      * error is received, it is emitted through the {@code Mono}.
-     * @see <a href="https://discordapp.com/developers/docs/resources/channel#create-message>Create Message</a>
+     * @see <a href="https://discordapp.com/developers/docs/resources/channel#create-message">Create Message</a>
      */
     public Mono<MessageData> createMessage(MultipartRequest request) {
         // TODO: improve API to create MultipartRequest objects

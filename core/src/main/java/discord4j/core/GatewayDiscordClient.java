@@ -27,7 +27,6 @@ import discord4j.core.object.Region;
 import discord4j.core.object.entity.*;
 import discord4j.core.object.entity.channel.Channel;
 import discord4j.core.object.presence.Presence;
-import discord4j.core.object.util.Snowflake;
 import discord4j.core.shard.GatewayBootstrap;
 import discord4j.core.spec.GuildCreateSpec;
 import discord4j.core.spec.UserEditSpec;
@@ -39,7 +38,9 @@ import discord4j.gateway.GatewayClientGroup;
 import discord4j.gateway.json.GatewayPayload;
 import discord4j.gateway.json.ShardGatewayPayload;
 import discord4j.rest.RestClient;
+import discord4j.rest.RestResources;
 import discord4j.rest.util.PaginationUtil;
+import discord4j.rest.util.Snowflake;
 import discord4j.store.api.util.LongLongTuple2;
 import discord4j.voice.VoiceConnectionFactory;
 import org.reactivestreams.Publisher;
@@ -102,7 +103,7 @@ public class GatewayDiscordClient {
      * scheduling and API communication, like the {@link RestClient}, {@link JacksonResources} and
      * {@link ReactorResources}.
      *
-     * @return the {@link CoreResources} for the parent {@link DiscordClient}
+     * @return the {@link RestResources} for the parent {@link DiscordClient}
      */
     public CoreResources getCoreResources() {
         return discordClient.getCoreResources();
@@ -162,10 +163,10 @@ public class GatewayDiscordClient {
     /**
      * Returns the {@link RestClient} used to execute REST API requests.
      *
-     * @return the {@link RestClient} tied to the parent {@link DiscordClient} through {@link CoreResources}
+     * @return the {@link RestClient} tied to this Gateway client.
      */
     public RestClient getRestClient() {
-        return getCoreResources().getRestClient();
+        return rest();
     }
 
     /**
@@ -443,11 +444,11 @@ public class GatewayDiscordClient {
 
         return gatewayResources.getStateView().getGuildStore()
                 .values()
-                .switchIfEmpty(PaginationUtil.paginateAfter(makeRequest, data -> Long.parseUnsignedLong(data.id()),
+                .switchIfEmpty(PaginationUtil.paginateAfter(makeRequest, data -> Snowflake.asLong(data.id()),
                         0L, 100)
                         .map(UserGuildData::id)
                         //.filter(id -> (id >> 22) % getConfig().getShardCount() == getConfig().getShardIndex())
-                        .flatMap(id -> getRestClient().getGuildService().getGuild(Long.parseUnsignedLong(id)))
+                        .flatMap(id -> getRestClient().getGuildService().getGuild(Snowflake.asLong(id)))
                         .flatMap(this::toGuildData))
                 .map(data -> new Guild(this, data));
     }
@@ -577,11 +578,11 @@ public class GatewayDiscordClient {
     }
 
     /**
-     * Disconnects this {@link GatewayDiscordClient} from Discord upon subscribing. All joining {@link GatewayClient
-     * GatewayClients} will attempt to gracefully close and complete this {@link Mono} after all of them have
-     * disconnected.
+     * Disconnects this {@link GatewayDiscordClient} from Discord upon subscribing. All {@link GatewayClient}
+     * instances in this shard group will attempt to close their current Gateway session and complete this
+     * {@link Mono} after all of them have disconnected.
      *
-     * @return A {@link Mono} that upon subscription, will disconnect each connection established by this
+     * @return A {@link Mono} that upon subscription, will disconnect each Gateway connection established by this
      * {@link GatewayDiscordClient} and complete after all of them have closed.
      */
     public Mono<Void> logout() {
@@ -589,11 +590,11 @@ public class GatewayDiscordClient {
     }
 
     /**
-     * Return a {@link Mono} that signals completion when all joining {@link GatewayClient GatewayClients} have
+     * Return a {@link Mono} that signals completion when all {@link GatewayClient} instances in this shard group have
      * disconnected.
      *
-     * @return a {@link Mono} that will complete once all {@link GatewayClient} instances connected to this
-     * {@link GatewayDiscordClient} have disconnected.
+     * @return a {@link Mono} that will complete once all {@link GatewayClient} instances in this shard group have
+     * disconnected.
      */
     public Mono<Void> onDisconnect() {
         return closeProcessor;
@@ -676,7 +677,7 @@ public class GatewayDiscordClient {
 
     private Mono<GuildData> toGuildData(GuildUpdateData guild) {
         return gatewayResources.getStateView().getGuildStore()
-                .find(Long.parseUnsignedLong(guild.id()))
+                .find(Snowflake.asLong(guild.id()))
                 .map(current -> ImmutableGuildData.builder()
                         .from(guild)
                         .roles(guild.roles().stream()

@@ -17,7 +17,7 @@
 package discord4j.core.object.reaction;
 
 import discord4j.core.object.entity.GuildEmoji;
-import discord4j.core.object.util.Snowflake;
+import discord4j.rest.util.Snowflake;
 import reactor.util.annotation.Nullable;
 
 import java.util.Objects;
@@ -103,14 +103,29 @@ public abstract class ReactionEmoji {
             this.isAnimated = isAnimated;
         }
 
+        /**
+         * Gets the id of the emoji.
+         *
+         * @return The id of the emoji.
+         */
         public Snowflake getId() {
             return Snowflake.of(id);
         }
 
+        /**
+         * Gets the name of the emoji.
+         *
+         * @return The name of the emoji.
+         */
         public String getName() {
             return name;
         }
 
+        /**
+         * Gets whether this emoji is animated.
+         *
+         * @return Whether this emoji is animated.
+         */
         public boolean isAnimated() {
             return isAnimated;
         }

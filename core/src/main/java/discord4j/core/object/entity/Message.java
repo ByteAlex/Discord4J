@@ -24,15 +24,15 @@ import discord4j.core.object.entity.channel.GuildChannel;
 import discord4j.core.object.entity.channel.MessageChannel;
 import discord4j.core.object.reaction.Reaction;
 import discord4j.core.object.reaction.ReactionEmoji;
-import discord4j.core.object.util.Snowflake;
 import discord4j.core.spec.MessageEditSpec;
 import discord4j.core.util.EntityUtil;
-import discord4j.rest.util.PaginationUtil;
 import discord4j.discordjson.json.ImmutableSuppressEmbedsRequest;
 import discord4j.discordjson.json.MessageData;
 import discord4j.discordjson.json.UserData;
 import discord4j.rest.entity.RestChannel;
 import discord4j.rest.entity.RestMessage;
+import discord4j.rest.util.PaginationUtil;
+import discord4j.rest.util.Snowflake;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.util.annotation.Nullable;
@@ -80,8 +80,8 @@ public final class Message implements Entity {
     public Message(final GatewayDiscordClient gateway, final MessageData data) {
         this.gateway = Objects.requireNonNull(gateway);
         this.data = Objects.requireNonNull(data);
-        this.rest = RestMessage.create(gateway.getRestClient(), Long.parseUnsignedLong(data.channelId()),
-                Long.parseUnsignedLong(data.id()));
+        this.rest = RestMessage.create(gateway.getRestClient(), Snowflake.asLong(data.channelId()),
+                Snowflake.asLong(data.id()));
     }
 
     @Override
@@ -105,7 +105,7 @@ public final class Message implements Entity {
      * Return a {@link RestChannel} handle to execute REST API operations on the channel of this message.
      */
     public RestChannel getRestChannel() {
-        return RestChannel.create(gateway.getRestClient(), Long.parseUnsignedLong(data.channelId()));
+        return RestChannel.create(gateway.getRestClient(), Snowflake.asLong(data.channelId()));
     }
 
     /**
@@ -310,7 +310,7 @@ public final class Message implements Entity {
                                 EntityUtil.getEmojiString(emoji),
                                 params);
 
-        return PaginationUtil.paginateAfter(makeRequest, data -> Long.parseUnsignedLong(data.id()), 0L, 100)
+        return PaginationUtil.paginateAfter(makeRequest, data -> Snowflake.asLong(data.id()), 0L, 100)
                 .map(data -> new User(gateway, data));
     }
 
@@ -593,7 +593,7 @@ public final class Message implements Entity {
     public enum Type {
 
         /**
-         * Unknown type
+         * Unknown type.
          */
         UNKNOWN(-1),
 
