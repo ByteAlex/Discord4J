@@ -46,10 +46,10 @@ public class DefaultShardingStrategy implements ShardingStrategy {
     @Override
     public Flux<ShardInfo> getShards(RestClient restClient) {
         return computeShardCount(restClient)
-                .flatMapMany(count -> Flux.from(indexSource.apply(count))
-                        .filter(index -> index >= 0 && index < count) // sanitize
-                        .map(index -> new ShardInfo(index, count))
-                        .filter(filter));
+            .flatMapMany(count -> Flux.from(indexSource.apply(count))
+                .filter(index -> index >= 0 && index < count) // sanitize
+                .map(index -> new ShardInfo(index, count))
+                .filter(filter));
     }
 
     private Mono<Integer> computeShardCount(RestClient restClient) {
@@ -57,7 +57,7 @@ public class DefaultShardingStrategy implements ShardingStrategy {
             return Mono.just(count);
         } else if (count == 0) {
             return restClient.getGatewayService().getGatewayBot()
-                    .map(data -> data.shards().get());
+                .map(data -> data.shards().get());
         }
         return Mono.error(new RuntimeException("Invalid shard count: " + count));
     }
@@ -159,7 +159,7 @@ public class DefaultShardingStrategy implements ShardingStrategy {
          * connecting to all shards given by shard count.
          *
          * @param shardFilter a {@link Predicate} for {@link ShardInfo} objects. Called for each shard determined by
-         * {@link #count(int)} and schedules it for connection if returning {@code true}.
+         *                    {@link #count(int)} and schedules it for connection if returning {@code true}.
          * @return this builder
          */
         public Builder filter(Predicate<ShardInfo> shardFilter) {
@@ -171,6 +171,7 @@ public class DefaultShardingStrategy implements ShardingStrategy {
          * Set the sharding factor to use when identifying to the Discord Gateway, determining the amount of shards that
          * will be concurrently identified. Defaults to 1. You should only change this value if your bot is
          * authorized to use the very large bot sharding system, otherwise you will hit a rate limit on identifying.
+         * The factor always needs to be a power of 2 and must not be lower than one.
          *
          * @param factor a positive number indicating the amount of shards that can be identified concurrently.
          * @return this builder
@@ -178,6 +179,9 @@ public class DefaultShardingStrategy implements ShardingStrategy {
         public Builder factor(int factor) {
             if (factor < 1) {
                 throw new IllegalArgumentException("factor < 1");
+            }
+            if ((factor & (factor - 1)) != 0) {
+                throw new IllegalArgumentException("factor must be a power of 2");
             }
             this.factor = factor;
             return this;
