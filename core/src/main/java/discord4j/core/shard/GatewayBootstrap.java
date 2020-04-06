@@ -29,6 +29,7 @@ import discord4j.core.event.dispatch.DispatchContext;
 import discord4j.core.event.dispatch.DispatchHandlers;
 import discord4j.core.event.domain.Event;
 import discord4j.core.object.presence.Presence;
+import discord4j.core.retriever.EntityRetrievalStrategy;
 import discord4j.core.state.StateHolder;
 import discord4j.core.state.StateView;
 import discord4j.discordjson.json.ActivityUpdateRequest;
@@ -77,10 +78,10 @@ import static discord4j.common.LogUtil.format;
  * <p>
  * One of the following methods must be subscribed to in order to begin establishing Discord Gateway connections:
  * <ul>
- *     <li>{@link #connect()} to obtain a {@link Mono} for a {@link GatewayDiscordClient} that can be externally
+ *     <li>{@link #login()} to obtain a {@link Mono} for a {@link GatewayDiscordClient} that can be externally
  *     managed.</li>
- *     <li>{@link #connect(Function)} to customize the {@link GatewayClient} instances to build.</li>
- *     <li>{@link #withConnection(Function)} to work with the {@link GatewayDiscordClient} in a scoped way, providing
+ *     <li>{@link #login(Function)} to customize the {@link GatewayClient} instances to build.</li>
+ *     <li>{@link #withGateway(Function)} to work with the {@link GatewayDiscordClient} in a scoped way, providing
  *     a mapping function that will close and release all resources on disconnection.</li>
  * </ul>
  * This bootstrap emits a result depending on the configuration of {@link #setAwaitConnections(boolean)}. Use
@@ -105,7 +106,7 @@ public class GatewayBootstrap<O extends GatewayOptions> {
     private ShardCoordinator shardCoordinator = null;
     private EventDispatcher eventDispatcher = null;
     private StoreService storeService = null;
-    private Function<StoreService, StoreService> storeServiceMapper = shardAwareStoreService();
+    private InvalidationStrategy invalidationStrategy = InvalidationStrategy.withJdkRegistry();
     private boolean memberRequest = true;
     private Function<ShardInfo, StatusUpdate> initialPresence = shard -> null;
     private Function<ShardInfo, SessionInfo> resumeOptions = shard -> null;
@@ -119,6 +120,7 @@ public class GatewayBootstrap<O extends GatewayOptions> {
     private Function<ReactorResources, ReactorResources> gatewayReactorResources = Function.identity();
     private Function<ReactorResources, VoiceReactorResources> voiceReactorResources = VoiceReactorResources::new;
     private VoiceConnectionFactory voiceConnectionFactory = defaultVoiceConnectionFactory();
+    private EntityRetrievalStrategy entityRetrievalStrategy = null;
 
     /**
      * Create a default {@link GatewayBootstrap} based off the given {@link DiscordClient} that provides an instance
@@ -145,7 +147,7 @@ public class GatewayBootstrap<O extends GatewayOptions> {
         this.shardCoordinator = source.shardCoordinator;
         this.eventDispatcher = source.eventDispatcher;
         this.storeService = source.storeService;
-        this.storeServiceMapper = source.storeServiceMapper;
+        this.invalidationStrategy = source.invalidationStrategy;
         this.memberRequest = source.memberRequest;
         this.initialPresence = source.initialPresence;
         this.resumeOptions = source.resumeOptions;
@@ -159,6 +161,7 @@ public class GatewayBootstrap<O extends GatewayOptions> {
         this.gatewayReactorResources = source.gatewayReactorResources;
         this.voiceReactorResources = source.voiceReactorResources;
         this.voiceConnectionFactory = source.voiceConnectionFactory;
+        this.entityRetrievalStrategy = source.entityRetrievalStrategy;
     }
 
     /**
@@ -257,9 +260,42 @@ public class GatewayBootstrap<O extends GatewayOptions> {
      *
      * @param storeServiceMapper a {@link Function} to transform a {@link StoreService}
      * @return this builder
+     * @deprecated use {@link #setInvalidationStrategy(InvalidationStrategy)}
      */
+    @Deprecated
     public GatewayBootstrap<O> setStoreServiceMapper(Function<StoreService, StoreService> storeServiceMapper) {
-        this.storeServiceMapper = Objects.requireNonNull(storeServiceMapper, "storeServiceMapper");
+        return setInvalidationStrategy(new InvalidationStrategy() {
+            @Override
+            public StoreService adaptStoreService(StoreService storeService) {
+                return storeServiceMapper.apply(storeService);
+            }
+
+            @Override
+            public Mono<Void> invalidate(ShardInfo shardInfo, StateHolder stateHolder) {
+                return stateHolder.invalidateStores();
+            }
+        });
+    }
+
+    /**
+     * Set the {@link InvalidationStrategy} this shard group should use on shard session termination. Discord Gateway
+     * sends real-time updates that are cached by Discord4J. When a Gateway session is terminated, any update beyond
+     * that point is lost and therefore the cache, represented by the {@link Store} abstraction, is outdated. Reacting
+     * to this event is called "invalidation" and can be configured through this method.
+     * <p>
+     * Defaults to using {@link InvalidationStrategy#withJdkRegistry()}, an in-memory registry to keep track of the
+     * source shard of each update for a fast removal on invalidation, at the cost of increased memory footprint.
+     * <ul>
+     *     <li>For a custom registry use {@link InvalidationStrategy#withCustomRegistry(KeyStoreRegistry)}</li>
+     *     <li>To disable this feature use {@link InvalidationStrategy#disable()}</li>
+     *     <li>If this group only contains one shard, use {@link InvalidationStrategy#identity()}</li>
+     * </ul>
+     *
+     * @param invalidationStrategy an {@link InvalidationStrategy} to apply to this shard group
+     * @return this builder
+     */
+    public GatewayBootstrap<O> setInvalidationStrategy(InvalidationStrategy invalidationStrategy) {
+        this.invalidationStrategy = Objects.requireNonNull(invalidationStrategy, "invalidationStrategy");
         return this;
     }
 
@@ -456,9 +492,20 @@ public class GatewayBootstrap<O extends GatewayOptions> {
     }
 
     /**
+     * Customize the {@link EntityRetrievalStrategy} to use by default in order to retrieve Discord entities.
+     *
+     * @param entityRetrievalStrategy a strategy to use to retrieve entities
+     * @return this builder
+     */
+    public GatewayBootstrap<O> setEntityRetrievalStrategy(@Nullable EntityRetrievalStrategy entityRetrievalStrategy) {
+        this.entityRetrievalStrategy = entityRetrievalStrategy;
+        return this;
+    }
+
+    /**
      * Connect to the Discord Gateway upon subscription to acquire a {@link GatewayDiscordClient} instance and use it
-     * declaratively, releasing the object once the derived usage {@link Function} completes, and the underlying shard
-     * group disconnects, according to {@link GatewayDiscordClient#onDisconnect()}.
+     * in a declarative way, releasing the object once the derived usage {@link Function} completes, and the underlying
+     * shard group disconnects, according to {@link GatewayDiscordClient#onDisconnect()}.
      * <p>
      * The timing of acquiring a {@link GatewayDiscordClient} depends on the {@link #setAwaitConnections(boolean)}
      * setting: if {@code true}, when all joining shards have connected; if {@code false}, as soon as it is possible to
@@ -471,6 +518,28 @@ public class GatewayBootstrap<O extends GatewayOptions> {
      * {@link GatewayDiscordClient} and trigger a processing pipeline from it.
      * @return an empty {@link Mono} completing after all resources have released
      */
+    public Mono<Void> withGateway(Function<GatewayDiscordClient, Mono<Void>> whileConnectedFunction) {
+        return usingConnection(gateway -> whileConnectedFunction.apply(gateway).then(gateway.onDisconnect()));
+    }
+
+    /**
+     * Connect to the Discord Gateway upon subscription to acquire a {@link GatewayDiscordClient} instance and use it
+     * in a declarative way, releasing the object once the derived usage {@link Function} completes, and the underlying
+     * shard group disconnects, according to {@link GatewayDiscordClient#onDisconnect()}.
+     * <p>
+     * The timing of acquiring a {@link GatewayDiscordClient} depends on the {@link #setAwaitConnections(boolean)}
+     * setting: if {@code true}, when all joining shards have connected; if {@code false}, as soon as it is possible to
+     * establish a connection to the Gateway.
+     * <p>
+     * Calling this method is useful when you operate on the {@link GatewayDiscordClient} object using reactive API you
+     * can compose within the scope of the given {@link Function}.
+     *
+     * @param whileConnectedFunction the {@link Function} to apply the <strong>connected</strong>
+     * {@link GatewayDiscordClient} and trigger a processing pipeline from it.
+     * @return an empty {@link Mono} completing after all resources have released
+     * @deprecated use {@link #withGateway(Function)}
+     */
+    @Deprecated
     public Mono<Void> withConnection(Function<GatewayDiscordClient, Mono<Void>> whileConnectedFunction) {
         return usingConnection(gateway -> whileConnectedFunction.apply(gateway).then(gateway.onDisconnect()));
     }
@@ -496,6 +565,29 @@ public class GatewayBootstrap<O extends GatewayOptions> {
      * {@link #setAwaitConnections(boolean)}, emits a {@link GatewayDiscordClient}. If an error occurs during the setup
      * sequence, it will be emitted through the {@link Mono}.
      */
+    public Mono<GatewayDiscordClient> login() {
+        return connect(DefaultGatewayClient::new);
+    }
+
+    /**
+     * Connect to the Discord Gateway upon subscription to build a {@link GatewayClient} from the set of options
+     * configured by this builder. The resulting {@link GatewayDiscordClient} can be externally managed, leaving you
+     * in charge of properly releasing its resources by calling {@link GatewayDiscordClient#logout()}.
+     * <p>
+     * The timing of acquiring a {@link GatewayDiscordClient} depends on the {@link #setAwaitConnections(boolean)}
+     * setting: if {@code true}, when all joining shards have connected; if {@code false}, as soon as it is possible
+     * to establish a connection to the Gateway.
+     * <p>
+     * All joining shards will attempt to serially connect to Discord Gateway, coordinated by the current
+     * {@link ShardCoordinator}. If one of the shards fail to connect due to a retryable problem like invalid session
+     * it will retry before continuing to the next one.
+     *
+     * @return a {@link Mono} that upon subscription and depending on the configuration of
+     * {@link #setAwaitConnections(boolean)}, emits a {@link GatewayDiscordClient}. If an error occurs during the setup
+     * sequence, it will be emitted through the {@link Mono}.
+     * @deprecated use {@link #login()}
+     */
+    @Deprecated
     public Mono<GatewayDiscordClient> connect() {
         return connect(DefaultGatewayClient::new);
     }
@@ -509,6 +601,21 @@ public class GatewayBootstrap<O extends GatewayOptions> {
      * {@link #setAwaitConnections(boolean)}, emits a {@link GatewayDiscordClient}. If an error occurs during the setup
      * sequence, it will be emitted through the {@link Mono}.
      */
+    public Mono<GatewayDiscordClient> login(Function<O, GatewayClient> clientFactory) {
+        return connect(clientFactory);
+    }
+
+    /**
+     * Connect to the Discord Gateway upon subscription using a custom {@link Function factory} to build a
+     * {@link GatewayClient} from the set of options configured by this builder. See {@link #connect()} for more details
+     * about how the returned {@link Mono} operates.
+     *
+     * @return a {@link Mono} that upon subscription and depending on the configuration of
+     * {@link #setAwaitConnections(boolean)}, emits a {@link GatewayDiscordClient}. If an error occurs during the setup
+     * sequence, it will be emitted through the {@link Mono}.
+     * @deprecated use {@link #login(Function)}
+     */
+    @Deprecated
     public Mono<GatewayDiscordClient> connect(Function<O, GatewayClient> clientFactory) {
         Map<String, Object> hints = new LinkedHashMap<>();
         hints.put("messageClass", MessageData.class);
@@ -521,8 +628,9 @@ public class GatewayBootstrap<O extends GatewayOptions> {
                 gatewayReactorResources, initVoiceReactorResources(), voiceReconnectOptions);
         MonoProcessor<Void> closeProcessor = MonoProcessor.create();
         GatewayClientGroupManager clientGroup = shardingStrategy.getGroupManager();
+        EntityRetrievalStrategy entityRetrievalStrategy = initEntityRetrievalStrategy();
         GatewayDiscordClient gateway = new GatewayDiscordClient(client, resources, closeProcessor,
-                clientGroup, voiceConnectionFactory);
+                clientGroup, voiceConnectionFactory, entityRetrievalStrategy);
 
         Flux<ShardInfo> connections = shardingStrategy.getShards(client)
                 .groupBy(shard -> shard.getIndex() % shardingStrategy.getShardingFactor())
@@ -611,7 +719,7 @@ public class GatewayBootstrap<O extends GatewayOptions> {
                                                 new SessionInfo(gatewayClient.getSessionId(),
                                                         gatewayClient.getSequence()) : null;
                                         return shardCoordinator.publishDisconnected(shard, session)
-                                                .then(stateHolder.invalidateStores())
+                                                .then(invalidationStrategy.invalidate(shard, stateHolder))
                                                 .then(Mono.fromRunnable(() -> clientGroup.remove(shard.getIndex())))
                                                 .then(Mono.defer(() -> {
                                                     if (clientGroup.getShardCount() == 0) {
@@ -715,9 +823,15 @@ public class GatewayBootstrap<O extends GatewayOptions> {
                 log.info("Found StoreService: {}", storeService);
             }
         }
-        return storeServiceMapper.compose((StoreService ss) ->
-                !ss.hasLongObjStores() ? new ForwardingStoreService(ss) : ss)
-                .apply(storeService);
+        return invalidationStrategy.adaptStoreService(storeService.hasLongObjStores() ?
+                storeService : new ForwardingStoreService(storeService));
+    }
+
+    private EntityRetrievalStrategy initEntityRetrievalStrategy() {
+        if (entityRetrievalStrategy != null) {
+            return entityRetrievalStrategy;
+        }
+        return EntityRetrievalStrategy.STORE_FALLBACK_REST;
     }
 
     private O buildOptions(GatewayDiscordClient gateway, IdentifyOptions identify, PayloadTransformer identifyLimiter) {
@@ -762,20 +876,25 @@ public class GatewayBootstrap<O extends GatewayOptions> {
      * A {@link StoreService} mapper that doesn't modify the input.
      *
      * @return a noop {@link StoreService} mapper
+     * @deprecated use {@link IdentityInvalidationStrategy} if you want to disable store invalidation
      */
+    @Deprecated
     public static Function<StoreService, StoreService> identityStoreService() {
         return storeService -> storeService;
     }
 
     /**
      * A {@link StoreService} mapper that will wrap the input with a {@link ShardAwareStoreService} using a
-     * {@link ShardingJdkStoreRegistry} that will track shard index of saved entities to allow for cleanup on shard
+     * {@link JdkKeyStoreRegistry} that will track shard index of saved entities to allow for cleanup on shard
      * invalidation.
      *
      * @return a shard-aware {@link StoreService} mapper
+     * @deprecated use {@link KeyStoreInvalidationStrategy} to use a dedicated key store to invalidate the store on
+     * shard invalidation
      */
+    @Deprecated
     public static Function<StoreService, StoreService> shardAwareStoreService() {
-        return storeService -> new ShardAwareStoreService(new ShardingJdkStoreRegistry(), storeService);
+        return storeService -> new ShardAwareStoreService(new JdkKeyStoreRegistry(), storeService);
     }
 
     /**
