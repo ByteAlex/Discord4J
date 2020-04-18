@@ -473,7 +473,8 @@ public final class Message implements Entity {
     @Experimental
     public Mono<Void> suppressEmbeds(final boolean suppress) {
         return gateway.getRestClient().getChannelService()
-                .suppressEmbeds(getChannelId().asLong(), getId().asLong(), ImmutableSuppressEmbedsRequest.of(suppress));
+                .suppressEmbeds(getChannelId().asLong(), getId().asLong(),
+                        ImmutableSuppressEmbedsRequest.builder().suppress(suppress).build());
     }
 
     /**
@@ -500,6 +501,18 @@ public final class Message implements Entity {
         return gateway.getRestClient().getChannelService()
                 .deleteReaction(getChannelId().asLong(), getId().asLong(), EntityUtil.getEmojiString(emoji),
                         userId.asLong());
+    }
+
+    /**
+     * Requests to remove all reactions of a specific emoji on this message.
+     *
+     * @param emoji The reaction to remove on this message
+     * @return A {@link Mono} where, upon successful completion, emits nothing; indicating the reaction from the
+     * specified user was removed on this message. If an error is received, it is emitted through the {@code Mono}.
+     */
+    public Mono<Void> removeReactions(final ReactionEmoji emoji) {
+        return gateway.getRestClient().getChannelService()
+            .deleteReactions(getChannelId().asLong(), getId().asLong(), EntityUtil.getEmojiString(emoji));
     }
 
     /**

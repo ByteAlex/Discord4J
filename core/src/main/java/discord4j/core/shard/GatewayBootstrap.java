@@ -26,7 +26,7 @@ import discord4j.core.GatewayDiscordClient;
 import discord4j.core.GatewayResources;
 import discord4j.core.event.EventDispatcher;
 import discord4j.core.event.dispatch.DispatchContext;
-import discord4j.core.event.dispatch.DispatchHandlers;
+import discord4j.core.event.dispatch.DispatchEventMapper;
 import discord4j.core.event.domain.Event;
 import discord4j.core.object.presence.Presence;
 import discord4j.core.retriever.EntityRetrievalStrategy;
@@ -36,7 +36,9 @@ import discord4j.discordjson.json.ActivityUpdateRequest;
 import discord4j.discordjson.json.MessageData;
 import discord4j.discordjson.json.gateway.Dispatch;
 import discord4j.discordjson.json.gateway.StatusUpdate;
+import discord4j.discordjson.possible.Possible;
 import discord4j.gateway.*;
+import discord4j.gateway.intent.IntentSet;
 import discord4j.gateway.json.ShardAwareDispatch;
 import discord4j.gateway.limiter.PayloadTransformer;
 import discord4j.gateway.limiter.RateLimitTransformer;
@@ -110,6 +112,7 @@ public class GatewayBootstrap<O extends GatewayOptions> {
     private boolean memberRequest = true;
     private Function<ShardInfo, StatusUpdate> initialPresence = shard -> null;
     private Function<ShardInfo, SessionInfo> resumeOptions = shard -> null;
+    private Possible<IntentSet> intents = Possible.absent();
     private boolean guildSubscriptions = true;
     private Function<GatewayDiscordClient, Mono<Void>> destroyHandler = shutdownDestroyHandler();
     private PayloadReader payloadReader = null;
@@ -117,10 +120,12 @@ public class GatewayBootstrap<O extends GatewayOptions> {
     private ReconnectOptions reconnectOptions = ReconnectOptions.create();
     private ReconnectOptions voiceReconnectOptions = ReconnectOptions.create();
     private GatewayObserver gatewayObserver = GatewayObserver.NOOP_LISTENER;
-    private Function<ReactorResources, ReactorResources> gatewayReactorResources = Function.identity();
-    private Function<ReactorResources, VoiceReactorResources> voiceReactorResources = VoiceReactorResources::new;
+    private Function<ReactorResources, GatewayReactorResources> gatewayReactorResources = null;
+    private Function<ReactorResources, VoiceReactorResources> voiceReactorResources = null;
     private VoiceConnectionFactory voiceConnectionFactory = defaultVoiceConnectionFactory();
     private EntityRetrievalStrategy entityRetrievalStrategy = null;
+    private DispatchEventMapper dispatchEventMapper = null;
+    private int maxMissedHeartbeatAck = 1;
 
     /**
      * Create a default {@link GatewayBootstrap} based off the given {@link DiscordClient} that provides an instance
@@ -151,6 +156,7 @@ public class GatewayBootstrap<O extends GatewayOptions> {
         this.memberRequest = source.memberRequest;
         this.initialPresence = source.initialPresence;
         this.resumeOptions = source.resumeOptions;
+        this.intents = source.intents;
         this.guildSubscriptions = source.guildSubscriptions;
         this.destroyHandler = source.destroyHandler;
         this.payloadReader = source.payloadReader;
@@ -162,6 +168,8 @@ public class GatewayBootstrap<O extends GatewayOptions> {
         this.voiceReactorResources = source.voiceReactorResources;
         this.voiceConnectionFactory = source.voiceConnectionFactory;
         this.entityRetrievalStrategy = source.entityRetrievalStrategy;
+        this.dispatchEventMapper = source.dispatchEventMapper;
+        this.maxMissedHeartbeatAck = source.maxMissedHeartbeatAck;
     }
 
     /**
@@ -385,6 +393,31 @@ public class GatewayBootstrap<O extends GatewayOptions> {
     }
 
     /**
+     * Set the intents to subscribe from the gateway for this shard.
+     * Intents will not be used, when this method is not called.
+     *
+     * @param intents set of intents to subscribe
+     * @return this builder
+     */
+    public GatewayBootstrap<O> setEnabledIntents(IntentSet intents) {
+        this.intents = Possible.of(intents);
+        return this;
+    }
+
+    /**
+     * Set the intents which should not be subscribed from the gateway for this shard.
+     * This method computes by {@code IntentSet.all()} - the provided intents
+     * Intents will not be used, when this method is not called.
+     *
+     * @param intents set of intents which should not be subscribed
+     * @return this builder
+     */
+    public GatewayBootstrap<O> setDisabledIntents(IntentSet intents) {
+        this.intents = Possible.of(IntentSet.all().andNot(intents));
+        return this;
+    }
+
+    /**
      * Set if this shard group will subscribe to presence and typing events. Defaults to {@code true}.
      *
      * @param guildSubscriptions whether to enable or disable guild subscriptions
@@ -461,7 +494,7 @@ public class GatewayBootstrap<O extends GatewayOptions> {
      * @param gatewayReactorResources a {@link ReactorResources} object for Gateway operations
      * @return this builder
      */
-    public GatewayBootstrap<O> setGatewayReactorResources(Function<ReactorResources, ReactorResources> gatewayReactorResources) {
+    public GatewayBootstrap<O> setGatewayReactorResources(Function<ReactorResources, GatewayReactorResources> gatewayReactorResources) {
         this.gatewayReactorResources = Objects.requireNonNull(gatewayReactorResources);
         return this;
     }
@@ -499,6 +532,32 @@ public class GatewayBootstrap<O extends GatewayOptions> {
      */
     public GatewayBootstrap<O> setEntityRetrievalStrategy(@Nullable EntityRetrievalStrategy entityRetrievalStrategy) {
         this.entityRetrievalStrategy = entityRetrievalStrategy;
+        return this;
+    }
+
+    /**
+     * Customize the {@link DispatchEventMapper} used to convert Gateway Dispatch into {@link Event} instances.
+     * Defaults to using {@link DispatchEventMapper#emitEvents()} that will process payloads and save its updates to
+     * the appropriate {@link Store}, then generate the right {@link Event} instance.
+     *
+     * @param dispatchEventMapper a factory to derive {@link Event Events} from Gateway
+     * @return this builder
+     */
+    public GatewayBootstrap<O> setDispatchEventMapper(DispatchEventMapper dispatchEventMapper) {
+        this.dispatchEventMapper = Objects.requireNonNull(dispatchEventMapper);
+        return this;
+    }
+
+    /**
+     * Set the maximum number of missed heartbeat acknowledge payloads each connection to Gateway will allow before
+     * triggering an automatic reconnect. A missed acknowledge is counted if a client does not receive a heartbeat
+     * ACK between its attempts at sending heartbeats.
+     *
+     * @param maxMissedHeartbeatAck a non-negative number representing the maximum number of allowed
+     * @return this builder
+     */
+    public GatewayBootstrap<O> setMaxMissedHeartbeatAck(int maxMissedHeartbeatAck) {
+        this.maxMissedHeartbeatAck = Math.max(0, maxMissedHeartbeatAck);
         return this;
     }
 
@@ -622,7 +681,7 @@ public class GatewayBootstrap<O extends GatewayOptions> {
         StateHolder stateHolder = new StateHolder(initStoreService(), new StoreContext(hints));
         StateView stateView = new StateView(stateHolder);
         EventDispatcher eventDispatcher = initEventDispatcher();
-        ReactorResources gatewayReactorResources = initGatewayReactorResources();
+        GatewayReactorResources gatewayReactorResources = initGatewayReactorResources();
         ShardCoordinator shardCoordinator = initShardCoordinator(gatewayReactorResources);
         GatewayResources resources = new GatewayResources(stateView, eventDispatcher, shardCoordinator, memberRequest,
                 gatewayReactorResources, initVoiceReactorResources(), voiceReconnectOptions);
@@ -631,11 +690,12 @@ public class GatewayBootstrap<O extends GatewayOptions> {
         EntityRetrievalStrategy entityRetrievalStrategy = initEntityRetrievalStrategy();
         GatewayDiscordClient gateway = new GatewayDiscordClient(client, resources, closeProcessor,
                 clientGroup, voiceConnectionFactory, entityRetrievalStrategy);
+        DispatchEventMapper dispatchMapper = initDispatchEventMapper();
 
         Flux<ShardInfo> connections = shardingStrategy.getShards(client)
                 .groupBy(shard -> shard.getIndex() % shardingStrategy.getShardingFactor())
                 .flatMap(group -> group.concatMap(shard -> acquireConnection(shard, clientFactory, gateway,
-                        shardCoordinator, stateHolder, eventDispatcher, clientGroup, closeProcessor)));
+                        shardCoordinator, stateHolder, eventDispatcher, clientGroup, closeProcessor, dispatchMapper)));
 
         if (awaitConnections) {
             return connections.then(Mono.just(gateway));
@@ -655,11 +715,12 @@ public class GatewayBootstrap<O extends GatewayOptions> {
                                               StateHolder stateHolder,
                                               EventDispatcher eventDispatcher,
                                               GatewayClientGroupManager clientGroup,
-                                              MonoProcessor<Void> closeProcessor) {
+                                              MonoProcessor<Void> closeProcessor,
+                                              DispatchEventMapper dispatchMapper) {
         return Mono.subscriberContext()
                 .flatMap(ctx -> Mono.<ShardInfo>create(sink -> {
                     StatusUpdate initial = Optional.ofNullable(initialPresence.apply(shard)).orElse(null);
-                    IdentifyOptions identify = new IdentifyOptions(shard, initial, guildSubscriptions);
+                    IdentifyOptions identify = new IdentifyOptions(shard, initial, intents, guildSubscriptions);
                     SessionInfo resume = resumeOptions.apply(shard);
                     if (resume != null) {
                         identify.setResumeSessionId(resume.getId());
@@ -686,7 +747,7 @@ public class GatewayBootstrap<O extends GatewayOptions> {
                                     info = shard;
                                     actual = dispatch;
                                 }
-                                return DispatchHandlers.handle(DispatchContext.of(actual, gateway, stateHolder, info))
+                                return dispatchMapper.handle(DispatchContext.of(actual, gateway, stateHolder, info))
                                         .subscriberContext(c -> c.put(LogUtil.KEY_SHARD_ID, info.getIndex()))
                                         .onErrorResume(error -> {
                                             log.error(format(ctx, "Error dispatching event"), error);
@@ -783,11 +844,17 @@ public class GatewayBootstrap<O extends GatewayOptions> {
         return new JacksonPayloadWriter(client.getCoreResources().getJacksonResources().getObjectMapper());
     }
 
-    private ReactorResources initGatewayReactorResources() {
+    private GatewayReactorResources initGatewayReactorResources() {
+        if (gatewayReactorResources == null) {
+            gatewayReactorResources = GatewayReactorResources::new;
+        }
         return gatewayReactorResources.apply(client.getCoreResources().getReactorResources());
     }
 
     private VoiceReactorResources initVoiceReactorResources() {
+        if (voiceReactorResources == null) {
+            voiceReactorResources = VoiceReactorResources::new;
+        }
         return voiceReactorResources.apply(client.getCoreResources().getReactorResources());
     }
 
@@ -834,10 +901,17 @@ public class GatewayBootstrap<O extends GatewayOptions> {
         return EntityRetrievalStrategy.STORE_FALLBACK_REST;
     }
 
+    private DispatchEventMapper initDispatchEventMapper() {
+        if (dispatchEventMapper != null) {
+            return dispatchEventMapper;
+        }
+        return DispatchEventMapper.emitEvents();
+    }
+
     private O buildOptions(GatewayDiscordClient gateway, IdentifyOptions identify, PayloadTransformer identifyLimiter) {
         GatewayOptions options = new GatewayOptions(client.getCoreResources().getToken(),
                 gateway.getGatewayResources().getGatewayReactorResources(), initPayloadReader(), initPayloadWriter(),
-                reconnectOptions, identify, gatewayObserver, identifyLimiter);
+                reconnectOptions, identify, gatewayObserver, identifyLimiter, maxMissedHeartbeatAck);
         return this.optionsModifier.apply(options);
     }
 
